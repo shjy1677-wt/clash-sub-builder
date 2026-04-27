@@ -1,8 +1,148 @@
-mixed-port: 7890
-allow-lan: true
-mode: Rule
+# ==========================================================
+# Mac mini M4 量化 & 全球办公环境 (2026 最终优化版)
+# 已添加：屏蔽 QUIC 协议，解决 Gemini/ChatGPT 等 App 连接问题
+# ==========================================================
+port: 7890
+socks-port: 7891
+allow-lan: false
+mode: rule
 log-level: info
-external-controller: :9090
+external-controller: 127.0.0.1:9090
+
 proxies:
+  # --- [1. 中转层 (GCP)] ---
+  - name: "GCP-HK-Transit"
+    type: vless
+    server: 34.92.157.205
+    port: 443
+    uuid: aec4aa53-b4e6-49b2-aa7f-3c2649077ff8
+    flow: xtls-rprx-vision
+    udp: true
+    tls: true
+    network: tcp
+    servername: www.microsoft.com
+    reality-opts: { public-key: XA5WF0InI7fxgG_WE3SBrVzcO6gwU91vhYbKZVTM4F4, short-id: 6796d6eac01c7f }
+    client-fingerprint: chrome
+
+  - name: "GCP-US-Transit"
+    type: vmess
+    server: 34.133.18.102
+    port: 53020
+    uuid: c27730fc-6d32-4413-d5fc-4598b4f20638
+    alterId: 0
+    cipher: auto
+    tls: true
+    servername: felicia-11.feliciajewelry.com
+    udp: true
+
+  # --- [2. 落地层 (Decodo 住宅)] ---
+  - name: "ISP-HK-Residential"
+    type: socks5
+    server: isp.decodo.com
+    port: 10001
+    username: "spkfwtu38z"
+    password: "+vsIUa8gsXtcuI17z6"
+    dialer-proxy: "GCP-HK-Transit"
+    udp: true
+
+  - name: "ISP-US-Residential"
+    type: socks5
+    server: isp.decodo.com
+    port: 10002
+    username: "spkfwtu38z"
+    password: "+vsIUa8gsXtcuI17z6"
+    dialer-proxy: "GCP-US-Transit"
+    udp: true
+
 proxy-groups:
+  # 🏦 交易自动保护：故障时自动切换
+  - name: "🛡️ 交易自动保护"
+    type: fallback
+    proxies: [ "ISP-HK-Residential", "GCP-HK-Transit" ]
+    url: 'https://api.binance.com/api/v3/time'
+    interval: 300
+
+  - name: "🏦 币安/OKX 专线"
+    type: select
+    proxies: [ "ISP-HK-Residential", "🛡️ 交易自动保护", "GCP-HK-Transit" ]
+
+  # 🇺🇸 美国住宅组
+  - name: "🇺🇸 美国专线-Auto"
+    type: url-test
+    proxies: [ "ISP-US-Residential", "GCP-US-Transit" ]
+    url: 'http://www.gstatic.com/generate_204'
+    interval: 300
+
+  - name: "🇺🇸 美国住宅专线"
+    type: select
+    proxies: [ "ISP-US-Residential", "🇺🇸 美国专线-Auto", "GCP-US-Transit" ]
+
+  # 🌐 常规上网
+  - name: "🌐 常规上网"
+    type: url-test
+    proxies: [ "GCP-US-Transit", "GCP-HK-Transit" ]
+    url: 'http://www.gstatic.com/generate_204'
+    interval: 300
+
+  # 🧪 IP 检测专用组
+  - name: "🔍 IP检测专用"
+    type: select
+    proxies: [ "🇺🇸 美国住宅专线", "🏦 币安/OKX 专线", "🌐 常规上网" ]
+
 rules:
+  # ========== 0. 最高优先级：屏蔽 QUIC 协议 ==========
+  # 解决 Gemini、ChatGPT 等 App 使用 HTTP/3 (UDP) 导致无法连接的问题
+  - AND,((NETWORK,UDP),(DST-PORT,443)),REJECT
+
+  # ========== 1. 防环路 ==========
+  - DOMAIN-SUFFIX,decodo.com,DIRECT
+  - DOMAIN-SUFFIX,decodo.cn,DIRECT
+
+  # ========== 2. 交易所专线 ==========
+  - DOMAIN-SUFFIX,binance.com,🏦 币安/OKX 专线
+  - DOMAIN-SUFFIX,binance.me,🏦 币安/OKX 专线
+  - DOMAIN-SUFFIX,binance.us,🏦 币安/OKX 专线
+  - DOMAIN-SUFFIX,okx.com,🏦 币安/OKX 专线
+  - DOMAIN-KEYWORD,binance,🏦 币安/OKX 专线
+
+  # ========== 3. IP 检测网站 ==========
+  - DOMAIN-SUFFIX,ip.sb,🔍 IP检测专用
+  - DOMAIN-SUFFIX,ipinfo.io,🔍 IP检测专用
+  - DOMAIN-SUFFIX,ident.me,🔍 IP检测专用
+  - DOMAIN-SUFFIX,ip.gs,🔍 IP检测专用
+  - DOMAIN-SUFFIX,whoer.net,🔍 IP检测专用
+  - DOMAIN-KEYWORD,whoer,🔍 IP检测专用
+
+  # ========== 4. Google & YouTube ==========
+  - DOMAIN-SUFFIX,google.com,🇺🇸 美国住宅专线
+  - DOMAIN-SUFFIX,googleapis.com,🇺🇸 美国住宅专线
+  - DOMAIN-SUFFIX,gstatic.com,🇺🇸 美国住宅专线
+  - DOMAIN-SUFFIX,youtube.com,🇺🇸 美国住宅专线
+  - DOMAIN-SUFFIX,googlevideo.com,🇺🇸 美国住宅专线
+  - DOMAIN-SUFFIX,ggpht.com,🇺🇸 美国住宅专线
+  - DOMAIN-SUFFIX,ytimg.com,🇺🇸 美国住宅专线
+  - DOMAIN-KEYWORD,google,🇺🇸 美国住宅专线
+  - DOMAIN-KEYWORD,youtube,🇺🇸 美国住宅专线
+
+  # ========== 5. 社交与 AI 工具 ==========
+  - DOMAIN-KEYWORD,tiktok,🇺🇸 美国住宅专线
+  - DOMAIN-SUFFIX,facebook.com,🇺🇸 美国住宅专线
+  - DOMAIN-SUFFIX,instagram.com,🇺🇸 美国住宅专线
+  - DOMAIN-SUFFIX,twitter.com,🇺🇸 美国住宅专线
+  - DOMAIN-SUFFIX,x.com,🇺🇸 美国住宅专线
+  - DOMAIN-SUFFIX,openai.com,🇺🇸 美国住宅专线
+  - DOMAIN-SUFFIX,chatgpt.com,🇺🇸 美国住宅专线
+  - DOMAIN-SUFFIX,claude.ai,🇺🇸 美国住宅专线
+  - DOMAIN-SUFFIX,deepseek.com,🇺🇸 美国住宅专线
+
+  # ========== 6. 国内分流与直连 ==========
+  - DOMAIN-SUFFIX,baidu.com,DIRECT
+  - DOMAIN-SUFFIX,taobao.com,DIRECT
+  - DOMAIN-SUFFIX,jd.com,DIRECT
+  - DOMAIN-SUFFIX,qq.com,DIRECT
+  - DOMAIN-SUFFIX,zhihu.com,DIRECT
+  - DOMAIN-SUFFIX,bilibili.com,DIRECT
+  - GEOIP,CN,DIRECT
+
+  # ========== 7. 最终兜底 ==========
+  - MATCH,🌐 常规上网
