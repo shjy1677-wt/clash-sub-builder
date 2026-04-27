@@ -159,3 +159,4 @@ git remote add upstream https://github.com/EsunR/clash-sub-builder.git
 git fetch upstream
 git merge upstream/main
 ```
+ 
